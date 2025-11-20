@@ -103,11 +103,16 @@ Write-Verbose "Loaded config for framework $($framework.name) $($framework.versi
 $moduleDependencies = ""
 
 foreach ($mod in $modules) {
-    if (-not (Get-Module -ListAvailable -Name $mod.name)) {
-        Write-Verbose "Installing module $($mod.name) $($mod.version)"
-        Install-Module -Name $mod.name -RequiredVersion $mod.version -Force -Scope CurrentUser
+    try {
+        if (-not (Get-Module -ListAvailable -Name $mod.name)) {
+            Write-Verbose "Installing module $($mod.name) $($mod.version)"
+            Install-Module -Name $mod.name -RequiredVersion $mod.version -Force -Scope CurrentUser -ErrorAction Stop
+        }
+        $moduleDependencies += "Import-Module -Name '$($mod.name)'" + "`n"
     }
-    $moduleDependencies += "Import-Module -Name '$($mod.name)'" + "`n"
+    catch {
+        Write-Error "Failed to install module $($mod.name): $_"        
+    }
 }
 
 function Get-NameByUrl {
@@ -123,18 +128,28 @@ foreach ($dep in $dependencies.git) {
 
     $depVersion = if ($dep.version) { $dep.version } else { "main" }
     $depName = Get-NameByUrl $dep.url
-    $requiredDependencyNames += $depName
-
+    
     $clonePath = Join-Path "./Modules" $depName
-
+    
     if (-not (Test-Path $clonePath)) {
         Write-Verbose "Cloning $depName"
-        git clone --branch $depVersion $dep.url $clonePath
+        $cloneOutput = & git clone --branch $depVersion $dep.url $clonePath 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to clone repository '$($dep.url)' into '$clonePath'. Git exit code $LASTEXITCODE. Details:`n$($cloneOutput -join "`n")"
+            if (Test-Path $clonePath) { Remove-Item -Recurse -Force -Path $clonePath }
+            continue
+        }
     }
     else {
         Write-Verbose "Updating $depName"
-        git --git-dir="$clonePath/.git" --work-tree="$clonePath" pull origin $depVersion
+        $pullOutput = & git --git-dir="$clonePath/.git" --work-tree="$clonePath" pull origin $depVersion 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to update repository '$($dep.url)' at '$clonePath'. Git exit code $LASTEXITCODE. Details:`n$($pullOutput -join "`n")"
+            continue
+        }
     }
+    Write-Verbose "Successfully cloned dependency $depName"
+    $requiredDependencyNames += $depName
 
     $moduleConfigPath = Join-Path $clonePath "module_config.json"
 
@@ -156,6 +171,9 @@ foreach ($dep in $dependencies.git) {
 
 # Remove unused module directories
 $moduleFoldersOnDisk = Get-ChildItem -Path "./Modules" -Directory | Select-Object -ExpandProperty Name
+if ($moduleFoldersOnDisk.Count -ne 0) {
+    Write-Verbose "Checking for unused module folders..."
+}
 
 foreach ($folder in $moduleFoldersOnDisk) {
     if ($requiredDependencyNames -notcontains $folder) {
@@ -165,6 +183,7 @@ foreach ($folder in $moduleFoldersOnDisk) {
 }
 
 $startScriptName = "Start-Project.ps1"
+Write-Verbose "Generating Start-Project.ps1 script..."
 
 if (-not (Test-Path $startScriptName)) {
     New-Item -Name $startScriptName -Path "." | Out-Null
@@ -173,3 +192,4 @@ if (-not (Test-Path $startScriptName)) {
 $startContent = "$moduleDependencies$gitDependenciesString& '$(Join-Path "./Scripts" $framework.entry_script)'"
 
 Set-Content -Path $startScriptName -Value $startContent
+Write-Verbose "PowerShell Framework setup completed!"
