@@ -40,11 +40,12 @@
 
 .NOTES
     Author: Levente Szabolcs Sipos
-    Version: 0.1.0
+    Version: 0.1.1
     Created: 2025.11.06
+    Updated: 2025.11.20
 #>
 
-
+[CmdletBinding()]
 param (
     [string]$ConfigPath = ".\project_config.json"
 )
@@ -61,14 +62,11 @@ foreach ($folder in $folders) {
         New-Item -ItemType Directory -Path $fullPath | Out-Null
         Write-Verbose "Created folder: $fullPath"
     }
-    else {
-        Write-Verbose "Folder already exists: $fullPath"
-    }
 }
 
 # Load config
 if (-not (Test-Path $ConfigPath)) {
-    Write-Verbose "Config not found! Creating a default one"
+    Write-Verbose "Config not found, creating default one"
     $jsonConfig = 
     @'
 {
@@ -89,85 +87,87 @@ if (-not (Test-Path $ConfigPath)) {
   }
 }
 '@
-    New-Item -Name $ConfigPath -Path "."
+    New-Item -Name $ConfigPath -Path "." | Out-Null
     Set-Content -Path $ConfigPath -Value $jsonConfig
 }
 
 $configJson = Get-Content $ConfigPath -Raw | ConvertFrom-Json
+
 $framework = $configJson.framework
 $modules = $configJson.modules.required
 $dependencies = $configJson.dependencies
 
-Write-Verbose "Loaded config for framework: $($framework.name) v$($framework.version)"
-
+Write-Verbose "Loaded config for framework $($framework.name) $($framework.version)"
 
 # Install required modules
 $moduleDependencies = ""
-foreach ($mod in $modules) {
-    $modName = $mod.name
-    $modVersion = $mod.version
 
-    if (-not (Get-Module -ListAvailable -Name $modName)) {
-        Write-Verbose "Installing module: $modName ($modVersion)"
-        try {
-            Install-Module -Name $modName -RequiredVersion $modVersion -Force -Scope CurrentUser
-        }
-        catch {
-            Write-Warning "Failed to install module: $modName"
-            exit 1
-        }
+foreach ($mod in $modules) {
+    if (-not (Get-Module -ListAvailable -Name $mod.name)) {
+        Write-Verbose "Installing module $($mod.name) $($mod.version)"
+        Install-Module -Name $mod.name -RequiredVersion $mod.version -Force -Scope CurrentUser
     }
-    else {
-        Write-Verbose "Module already installed: $modName"
-    }
-    $moduleDependencies = "$($moduleDependencies)Import-Module -Name '$modName'`n"
+    $moduleDependencies += "Import-Module -Name '$($mod.name)'" + "`n"
 }
 
 function Get-NameByUrl {
-    param (
-        [string]$url
-    )
-
-    return (($url -split '/')[-1] -replace '\.git$', '')
+    param ([string]$url)
+    return (($url -split '/')[ -1 ] -replace '\.git$', '')
 }
 
 # Clone Git dependencies
 $gitDependenciesString = ""
+$requiredDependencyNames = @()
+
 foreach ($dep in $dependencies.git) {
+
     $depVersion = if ($dep.version) { $dep.version } else { "main" }
-    $depName = Join-Path "./Modules" (Get-NameByUrl $dep.url)
-    
-    if (-not (Test-Path $depName)) {
-        Write-Verbose "Cloning $depName from $($dep.url)..."
-        git clone --branch $depVersion $dep.url $depName
+    $depName = Get-NameByUrl $dep.url
+    $requiredDependencyNames += $depName
+
+    $clonePath = Join-Path "./Modules" $depName
+
+    if (-not (Test-Path $clonePath)) {
+        Write-Verbose "Cloning $depName"
+        git clone --branch $depVersion $dep.url $clonePath
     }
     else {
-        Write-Verbose "Dependency already cloned: $depName"
-        Write-Verbose "Pulling latest changes for $depName..."
-        git --git-dir="$depName/.git" --work-tree="$depName" pull origin $depVersion
+        Write-Verbose "Updating $depName"
+        git --git-dir="$clonePath/.git" --work-tree="$clonePath" pull origin $depVersion
     }
 
-    $moduleConfigPath = Join-Path ($depName) "module_config.json"
+    $moduleConfigPath = Join-Path $clonePath "module_config.json"
+
     if (Test-Path $moduleConfigPath) {
         $moduleConfigJson = Get-Content $moduleConfigPath -Raw | ConvertFrom-Json
         $possibleSettings = $moduleConfigJson.module.possible_settings
 
-        $possibleSettings | ForEach-Object {
-            if ($dep.PSObject.Properties.Name -contains $_) {
-                $prop_name = $_
-                $prop_value = $dep.PSObject.Properties.Where({ $_.Name -eq $prop_name }).Value
-                $gitDependenciesString = "$($gitDependenciesString)`$GLOBAL:$($prop_name.ToUpper()) = '$prop_value'`n"
+        foreach ($setting in $possibleSettings) {
+            if ($dep.PSObject.Properties.Name -contains $setting) {
+                $value = $dep.$setting
+                $gitDependenciesString += "`$GLOBAL:$($setting.ToUpper()) = '$value'`n"
             }
         }
 
-        $entryScriptName = Join-Path $depName $moduleConfigJson.module.entry_script
-        $gitDependenciesString = "$($gitDependenciesString). '$entryScriptName'`n"
+        $entryScriptName = Join-Path $clonePath $moduleConfigJson.module.entry_script
+        $gitDependenciesString += ". '$entryScriptName'" + "`n"
+    }
+}
+
+# Remove unused module directories
+$moduleFoldersOnDisk = Get-ChildItem -Path "./Modules" -Directory | Select-Object -ExpandProperty Name
+
+foreach ($folder in $moduleFoldersOnDisk) {
+    if ($requiredDependencyNames -notcontains $folder) {
+        Write-Verbose "Removing unused module folder $folder"
+        Remove-Item -Recurse -Force -Path (Join-Path "./Modules" $folder)
     }
 }
 
 $startScriptName = "Start-Project.ps1"
+
 if (-not (Test-Path $startScriptName)) {
-    New-Item -Name $startScriptName -Path "."
+    New-Item -Name $startScriptName -Path "." | Out-Null
 }
 
 $startContent = "$moduleDependencies$gitDependenciesString& '$(Join-Path "./Scripts" $framework.entry_script)'"
