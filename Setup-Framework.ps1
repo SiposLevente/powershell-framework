@@ -96,7 +96,7 @@ if (-not (Test-Path $ConfigPath)) {
 $configJson = Get-Content $ConfigPath -Raw | ConvertFrom-Json
 $framework = $configJson.framework
 $modules = $configJson.modules.required
-$dependencies = $configJson.dependencies.git
+$dependencies = $configJson.dependencies
 
 Write-Verbose "Loaded config for framework: $($framework.name) v$($framework.version)"
 
@@ -123,16 +123,23 @@ foreach ($mod in $modules) {
     $moduleDependencies = "$($moduleDependencies)Import-Module -Name '$modName'`n"
 }
 
+function Get-NameByUrl {
+    param (
+        [string]$url
+    )
+
+    return (($url -split '/')[-1] -replace '\.git$', '')
+}
+
 # Clone Git dependencies
-$gitDependencies = ""
-foreach ($dep in $dependencies) {
-    $depUrl = $dep.url
+$gitDependenciesString = ""
+foreach ($dep in $dependencies.git) {
     $depVersion = if ($dep.version) { $dep.version } else { "main" }
-    $depName = Join-Path "./Modules" (($dep.url -split '/')[-1] -replace '\.git$', '')
+    $depName = Join-Path "./Modules" (Get-NameByUrl $dep.url)
     
     if (-not (Test-Path $depName)) {
-        Write-Verbose "Cloning $depName from $depUrl..."
-        git clone --branch $depVersion $depUrl $depName # check if cloned is on the correct branch
+        Write-Verbose "Cloning $depName from $($dep.url)..."
+        git clone --branch $depVersion $dep.url $depName
     }
     else {
         Write-Verbose "Dependency already cloned: $depName"
@@ -149,12 +156,12 @@ foreach ($dep in $dependencies) {
             if ($dep.PSObject.Properties.Name -contains $_) {
                 $prop_name = $_
                 $prop_value = $dep.PSObject.Properties.Where({ $_.Name -eq $prop_name }).Value
-                $gitDependencies = "$($gitDependencies)`$GLOBAL:$($prop_name.ToUpper()) = '$prop_value'`n"
+                $gitDependenciesString = "$($gitDependenciesString)`$GLOBAL:$($prop_name.ToUpper()) = '$prop_value'`n"
             }
         }
 
         $entryScriptName = Join-Path $depName $moduleConfigJson.module.entry_script
-        $gitDependencies = "$($gitDependencies). '$entryScriptName'`n"
+        $gitDependenciesString = "$($gitDependenciesString). '$entryScriptName'`n"
     }
 }
 
@@ -163,6 +170,6 @@ if (-not (Test-Path $startScriptName)) {
     New-Item -Name $startScriptName -Path "."
 }
 
-$startContent = "$moduleDependencies$gitDependencies& '$(Join-Path "./Scripts" $framework.entry_script)'"
+$startContent = "$moduleDependencies$gitDependenciesString& '$(Join-Path "./Scripts" $framework.entry_script)'"
 
 Set-Content -Path $startScriptName -Value $startContent
