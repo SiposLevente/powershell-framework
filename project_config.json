@@ -1,0 +1,17 @@
+{
+  "framework": {
+    "name": "MyPowerShellFramework",
+    "version": "1.0.0",
+    "author": "",
+    "description": "A modular PowerShell framework for automation tasks.",
+    "entry_script": "main.ps1"
+  },
+  "modules": {
+    "_comment": "Example: { \"name\": \"Pester\", \"version\": \">=3.4.0\" }",
+    "required": []
+  },
+  "dependencies": {
+    "_comment": "Example: git: [{ \"url\": \"ssh://git@agit.kbc.be:7999/~jf69674/ps-logger.git\", \"version\": \"main\" }]",
+    "git": []
+  }
+}
