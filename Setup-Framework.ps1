@@ -84,7 +84,7 @@ if (-not (Test-Path $ConfigPath)) {
     "required": []
   },
   "dependencies": {
-    "_comment": "Example: git: [{ \"url\": \"ssh://git@agit.kbc.be:7999/~jf69674/ps-logger.git\", \"version\": \"main\" }]",
+    "_comment": "Example: git: [{ \"url\": \"\", \"version\": \"main\" }]",
     "git": []
   }
 }
