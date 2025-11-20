@@ -1,3 +1,4 @@
-./Logs/**
-./Modules/**
+.vscode/**
+Logs/**
+Modules/**
 Start-Project.ps1
