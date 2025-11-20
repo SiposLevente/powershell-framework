@@ -75,7 +75,7 @@ if (-not (Test-Path $ConfigPath)) {
     "version": "1.0.0",
     "author": "",
     "description": "A modular PowerShell framework for automation tasks.",
-    "entry_script": "./Scripts/main.ps1"
+    "entry_script": "main.ps1"
   },
   "modules": {
     "_comment": "Example: { \"name\": \"Pester\", \"version\": \">=3.4.0\" }",
